@@ -886,116 +886,214 @@ void SmartTranslateRotate::_move(Change &change) {
     auto reflist1 = spc.findAtoms(refid1);                  // list of atoms w. 'refid1'
     auto reflist2 = spc.findAtoms(refid2);                  // list of atoms w. 'refid2'
     if (size(mollist) > 0) {
-        auto it = slump.sample(mollist.begin(), mollist.end()); // chosing random molecule in group of type molname
-        auto ref1 = slump.sample(reflist1.begin(), reflist1.end());
-        auto ref2 = slump.sample(reflist2.begin(), reflist2.end());
-        cylAxis = spc.geo.vdist(ref2->pos, ref1->pos) * 0.5; // half vector between reference atoms
-        origo = ref2->pos - cylAxis; // coordinates of middle point between reference atoms: new origo
-        if (r_x < cylAxis.norm())    // checking so that a is larger than length of cylAxis
-            throw std::runtime_error(
-                "specified radius of ellipsoid along the axis connecting reference atoms (rx) must be larger or equal "
-                "to half the distance between reference atoms. Specified radius is " +
-                std::to_string(r_x) + " Å whereas half the distance between reference atoms is " +
-                std::to_string(cylAxis.norm()) + "Å");
+        if (refid1 == refid2) { // Applying spherical region
+            auto it = slump.sample(mollist.begin(), mollist.end());
+            auto ref = slump.sample(reflist1.begin(), reflist1.end());
+            origo = ref->pos;
 
-        if (not it->empty()) { // checking so that molecule exists
-            assert(it->id == molid);
+            if (not it->empty()) { // checking so that molecule exists
+                assert(it->id == molid);
 
-            randNbr = slump();                   // assigning random number in range [0,1]
-            molV = spc.geo.vdist(it->cm, origo); // vector between selected molecule and center of geometry
-            cosTheta = molV.dot(cylAxis) / molV.norm() /
-                       cylAxis.norm(); // cosinus of angle between coordinate vector of selected molecule and axis
-                                       // connecting reference atoms
-            theta = acos(
-                cosTheta); // angle between coordinate vector of selected molecule and axis connecting reference atoms
-            x = cosTheta * molV.norm();   // x coordinate of selected molecule with respect to center of geometry (in
-                                          // plane including vectors molV and cylAxis)
-            y = sin(theta) * molV.norm(); // y coordinate of selected molecule with respect to center of geometry (in
-                                          // plane including vectors molV and cylAxis)
-            coord =
-                x * x / (r_x * r_x) + y * y / (r_y * r_y); // calculating normalized coordinate with respect to
-                                                           // dimensions of geometry (> 1.0 -> outside, < 1.0 -> inside)
+                randNbr = slump();                   // assigning random number in range [0,1]
+                molV = spc.geo.vdist(it->cm, origo); // vector between selected molecule and center of geometry
+                coord = molV.norm() / r_x; // x coordinate of selected molecule with respect to center of geometry (in
+                                           // plane including vectors molV and cylAxis)
+                // cout << "Normalized vector: " << molV.norm() << " Å, " << "Coord: " << coord << endl;
+                if (not(coord > 1.0 && p < randNbr)) {
 
-            if (not(coord > 1.0 && p < randNbr)) {
+                    if (coord <= 1.0)
+                        cntInner += 1; // counting number of times a molecule is found inside geometry
 
-                if (coord <= 1.0)
-                    cntInner += 1; // counting number of times a molecule is found inside geometry
+                    cnt += 1; // total number of counts
 
-                cnt += 1; // total number of counts
+                    if (findBias == true) { // continuing to adjust bias according to number of molecules inside and
+                                            // outside geometry
+                        countNin = 0.0;     // counter keeping track of number of molecules inside geometry
+                        countNout = 0.0;    // counter keeping track of number of molecules outside geometry
+                        Ntot = 0.0;         // total number of particles
+                        for (auto &g : mollist) {
+                            Ntot += 1.0;
+                            molV = spc.geo.vdist(g.cm, origo);
+                            coordTemp = molV.norm() / r_x;
+                            if (coordTemp <= 1.0)
+                                countNin += 1.0;
+                            else
+                                countNout += 1.0;
+                        }
 
-                if (findBias ==
-                    true) { // continuing to adjust bias according to number of molecules inside and outside geometry
-                    countNin = 0.0;  // counter keeping track of number of molecules inside geometry
-                    countNout = 0.0; // counter keeping track of number of molecules outside geometry
-                    Ntot = 0.0;      // total number of particles
-                    for (auto &g : mollist) {
-                        Ntot += 1.0;
-                        molV = spc.geo.vdist(g.cm, origo);
-                        cosTheta = molV.dot(cylAxis) / molV.norm() / cylAxis.norm();
-                        theta = acos(cosTheta);
-                        x = cosTheta * molV.norm();
-                        y = sin(theta) * molV.norm();
-                        coordTemp = x * x / (r_x * r_x) + y * y / (r_y * r_y);
-                        if (coordTemp <= 1.0)
-                            countNin += 1.0;
-                        else
-                            countNout += 1.0;
-                    }
+                        countNin_avg +=
+                            countNin; // appending number of molecules inside geometry (since it has type Average)
+                        countNout_avg +=
+                            countNout; // appending number of molecules outside geometry (since it has type Average)
 
-                    countNin_avg +=
-                        countNin; // appending number of molecules inside geometry (since it has type Average)
-                    countNout_avg +=
-                        countNout; // appending number of molecules outside geometry (since it has type Average)
+                        if (cnt % 1000 == 0) {
+                            countNin_avgBlocks +=
+                                countNin_avg
+                                    .avg(); // appending average number of molecules inside geometry (type Average)
+                            countNout_avgBlocks +=
+                                countNout_avg
+                                    .avg(); // appending average number of molecules outside geometry (type Average)
+                            // cout << "Number of molecule inside sphere around atom of refid1: " << refid1 << ": " <<
+                            // countNin << endl; cout << "Number of molecule outside sphere around atom of refid1: " <<
+                            // refid1 << ": " << countNout << endl << endl;
+                        }
 
-                    if (cnt % 100 == 0) {
-                        countNin_avgBlocks +=
-                            countNin_avg.avg(); // appending average number of molecules inside geometry (type Average)
-                        countNout_avgBlocks +=
-                            countNout_avg
-                                .avg(); // appending average number of molecules outside geometry (type Average)
-                    }
-
-                    if (cnt % 100000 == 0) {
-                        Nin = countNin_avgBlocks.avg(); // block average number of molecules inside geometry
-                        if (countNin_avgBlocks.stdev() / Nin <
-                            rsd) { // if block standard deviation is below specified threshold
-                            cout << "Bias found with rsd = " << countNin_avgBlocks.stdev() / Nin << " < " << rsd
-                                 << "\n\n";
-                            cout << "Average # of water molecules inside sphere: " << Nin << "\n";
-                            findBias = false; // stop updating bias, use constant value
+                        if (cnt % 100000 == 0) {
+                            Nin = countNin_avgBlocks.avg(); // block average number of molecules inside geometry
+                            if (countNin_avgBlocks.stdev() / Nin <
+                                rsd) { // if block standard deviation is below specified threshold
+                                cout << "Bias found with rsd = " << countNin_avgBlocks.stdev() / Nin << " < " << rsd
+                                     << "\n\n";
+                                cout << "Average # of water molecules inside sphere: " << Nin << "\n";
+                                findBias = false; // stop updating bias, use constant value
+                            }
                         }
                     }
-                }
-                if (dptrans > 0) { // translate
-                    Point oldcm = it->cm;
-                    Point dp = ranunit(slump, dir) * dptrans * slump();
+                    if (dptrans > 0) { // translate
+                        Point oldcm = it->cm;
+                        Point dp = ranunit(slump, dir) * dptrans * slump();
 
-                    it->translate(dp, spc.geo.getBoundaryFunc());
-                    _sqd = spc.geo.sqdist(oldcm, it->cm); // squared displacement
-                }
+                        it->translate(dp, spc.geo.getBoundaryFunc());
+                        _sqd = spc.geo.sqdist(oldcm, it->cm); // squared displacement
+                    }
 
-                if (dprot > 0) { // rotate
-                    Point u = ranunit(slump);
-                    double angle = dprot * (slump() - 0.5);
-                    Eigen::Quaterniond Q(Eigen::AngleAxisd(angle, u));
-                    it->rotate(Q, spc.geo.getBoundaryFunc());
-                }
+                    if (dprot > 0) { // rotate
+                        Point u = ranunit(slump);
+                        double angle = dprot * (slump() - 0.5);
+                        Eigen::Quaterniond Q(Eigen::AngleAxisd(angle, u));
+                        it->rotate(Q, spc.geo.getBoundaryFunc());
+                    }
 
-                if (dptrans > 0 || dprot > 0) { // define changes
-                    Change::data d;
-                    d.index = Faunus::distance(spc.groups.begin(), it); // integer *index* of moved group
-                    d.all = true;                                       // *all* atoms in group were moved
-                    change.groups.push_back(d);                         // add to list of moved groups
+                    if (dptrans > 0 || dprot > 0) { // define changes
+                        Change::data d;
+                        d.index = Faunus::distance(spc.groups.begin(), it); // integer *index* of moved group
+                        d.all = true;                                       // *all* atoms in group were moved
+                        change.groups.push_back(d);                         // add to list of moved groups
+                    }
+                    assert(spc.geo.sqdist(it->cm, Geometry::massCenter(it->begin(), it->end(),
+                                                                       spc.geo.getBoundaryFunc(), -it->cm)) < 1e-6);
+                    molV = spc.geo.vdist(it->cm, origo);
+                    coordNew = molV.norm() / r_x;
                 }
-                assert(spc.geo.sqdist(it->cm, Geometry::massCenter(it->begin(), it->end(), spc.geo.getBoundaryFunc(),
-                                                                   -it->cm)) < 1e-6);
-                molV = spc.geo.vdist(it->cm, origo);
-                cosTheta = molV.dot(cylAxis) / molV.norm() / cylAxis.norm();
-                theta = acos(cosTheta);
-                x = cosTheta * molV.norm();
-                y = sin(theta) * molV.norm();
-                coordNew = x * x / (r_x * r_x) + y * y / (r_y * r_y);
+            }
+        }
 
+        else {
+            auto it = slump.sample(mollist.begin(), mollist.end()); // chosing random molecule in group of type molname
+            auto ref1 = slump.sample(reflist1.begin(), reflist1.end());
+            auto ref2 = slump.sample(reflist2.begin(), reflist2.end());
+            cylAxis = spc.geo.vdist(ref2->pos, ref1->pos) * 0.5; // half vector between reference atoms
+            origo = ref2->pos - cylAxis; // coordinates of middle point between reference atoms: new origo
+            if (r_x < cylAxis.norm())    // checking so that a is larger than length of cylAxis
+                throw std::runtime_error("specified radius of ellipsoid along the axis connecting reference atoms (rx) "
+                                         "must be larger or equal "
+                                         "to half the distance between reference atoms. Specified radius is " +
+                                         std::to_string(r_x) +
+                                         " Å whereas half the distance between reference atoms is " +
+                                         std::to_string(cylAxis.norm()) + "Å");
+
+            if (not it->empty()) { // checking so that molecule exists
+                assert(it->id == molid);
+
+                randNbr = slump();                   // assigning random number in range [0,1]
+                molV = spc.geo.vdist(it->cm, origo); // vector between selected molecule and center of geometry
+                cosTheta = molV.dot(cylAxis) / molV.norm() /
+                           cylAxis.norm();  // cosinus of angle between coordinate vector of selected molecule and axis
+                                            // connecting reference atoms
+                theta = acos(cosTheta);     // angle between coordinate vector of selected molecule and axis connecting
+                                            // reference atoms
+                x = cosTheta * molV.norm(); // x coordinate of selected molecule with respect to center of geometry (in
+                                            // plane including vectors molV and cylAxis)
+                y = sin(theta) * molV.norm(); // y coordinate of selected molecule with respect to center of geometry
+                                              // (in plane including vectors molV and cylAxis)
+                coord = x * x / (r_x * r_x) +
+                        y * y / (r_y * r_y); // calculating normalized coordinate with respect to
+                                             // dimensions of geometry (> 1.0 -> outside, < 1.0 -> inside)
+
+                if (not(coord > 1.0 && p < randNbr)) {
+
+                    if (coord <= 1.0)
+                        cntInner += 1; // counting number of times a molecule is found inside geometry
+
+                    cnt += 1; // total number of counts
+
+                    if (findBias == true) { // continuing to adjust bias according to number of molecules inside and
+                                            // outside geometry
+                        countNin = 0.0;     // counter keeping track of number of molecules inside geometry
+                        countNout = 0.0;    // counter keeping track of number of molecules outside geometry
+                        Ntot = 0.0;         // total number of particles
+                        for (auto &g : mollist) {
+                            Ntot += 1.0;
+                            molV = spc.geo.vdist(g.cm, origo);
+                            cosTheta = molV.dot(cylAxis) / molV.norm() / cylAxis.norm();
+                            theta = acos(cosTheta);
+                            x = cosTheta * molV.norm();
+                            y = sin(theta) * molV.norm();
+                            coordTemp = x * x / (r_x * r_x) + y * y / (r_y * r_y);
+                            if (coordTemp <= 1.0)
+                                countNin += 1.0;
+                            else
+                                countNout += 1.0;
+                        }
+
+                        countNin_avg +=
+                            countNin; // appending number of molecules inside geometry (since it has type Average)
+                        countNout_avg +=
+                            countNout; // appending number of molecules outside geometry (since it has type Average)
+
+                        if (cnt % 1000 == 0) {
+                            countNin_avgBlocks +=
+                                countNin_avg
+                                    .avg(); // appending average number of molecules inside geometry (type Average)
+                            countNout_avgBlocks +=
+                                countNout_avg
+                                    .avg(); // appending average number of molecules outside geometry (type Average)
+                            // cout << "Number of molecule inside sphere around atom of refid1: " << refid1 << ": " <<
+                            // countNin << endl; cout << "Number of molecule outside sphere around atom of refid1: " <<
+                            // refid1 << ": " << countNout << endl << endl;
+                        }
+
+                        if (cnt % 100000 == 0) {
+                            Nin = countNin_avgBlocks.avg(); // block average number of molecules inside geometry
+                            if (countNin_avgBlocks.stdev() / Nin <
+                                rsd) { // if block standard deviation is below specified threshold
+                                cout << "Bias found with rsd = " << countNin_avgBlocks.stdev() / Nin << " < " << rsd
+                                     << "\n\n";
+                                cout << "Average # of water molecules inside ellipsoid: " << Nin << "\n";
+                                findBias = false; // stop updating bias, use constant value
+                            }
+                        }
+                    }
+                    if (dptrans > 0) { // translate
+                        Point oldcm = it->cm;
+                        Point dp = ranunit(slump, dir) * dptrans * slump();
+
+                        it->translate(dp, spc.geo.getBoundaryFunc());
+                        _sqd = spc.geo.sqdist(oldcm, it->cm); // squared displacement
+                    }
+
+                    if (dprot > 0) { // rotate
+                        Point u = ranunit(slump);
+                        double angle = dprot * (slump() - 0.5);
+                        Eigen::Quaterniond Q(Eigen::AngleAxisd(angle, u));
+                        it->rotate(Q, spc.geo.getBoundaryFunc());
+                    }
+
+                    if (dptrans > 0 || dprot > 0) { // define changes
+                        Change::data d;
+                        d.index = Faunus::distance(spc.groups.begin(), it); // integer *index* of moved group
+                        d.all = true;                                       // *all* atoms in group were moved
+                        change.groups.push_back(d);                         // add to list of moved groups
+                    }
+                    assert(spc.geo.sqdist(it->cm, Geometry::massCenter(it->begin(), it->end(),
+                                                                       spc.geo.getBoundaryFunc(), -it->cm)) < 1e-6);
+                    molV = spc.geo.vdist(it->cm, origo);
+                    cosTheta = molV.dot(cylAxis) / molV.norm() / cylAxis.norm();
+                    theta = acos(cosTheta);
+                    x = cosTheta * molV.norm();
+                    y = sin(theta) * molV.norm();
+                    coordNew = x * x / (r_x * r_x) + y * y / (r_y * r_y);
+                }
                 if (findBias == true) {                 // if using constantly updated bias
                     if (coord <= 1.0 && coordNew > 1.0) // if molecule goes from inside to outside geometry
                         _bias = -log(p / (1 - (1 - p) / (p * Ntot +
