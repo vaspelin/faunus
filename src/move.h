@@ -371,6 +371,45 @@ class ChargeTransfer : public Movebase {
 };
 
 /**
+ * @brief Moves charge to several atoms simultaneously
+ */
+class ChargeMoveExt : public Movebase {
+  private:
+    typedef typename Space::Tpvec Tpvec;
+    Space &spc;           // Space to operate on
+    Average<double> msqd; // mean squared displacement
+    double dq = 0, deltaq = 0;
+
+    struct moldata {
+        double charges = 0;
+        double moves = 0;
+        double ratio2 = 0;
+        int numOfAtoms = 0;
+        int id = 0;
+        std::string molname;
+        std::vector<double> min, max;
+        std::vector<double> molrange;
+        std::vector<double> ratio;
+        std::vector<double> changeQ;
+        Change::data cdata;
+    };
+
+    moldata mol1, mol2;
+
+    double sumTemp = 0;
+    int i = 0;
+
+    void _to_json(json &j) const override;
+    void _from_json(const json &j) override;
+    void _move(Change &change) override;
+    void _accept(Change &) override;
+    void _reject(Change &) override;
+
+  public:
+    ChargeMoveExt(Tspace &spc);
+};
+
+/**
  * @brief QuadrantJump translates a molecule to another quadrant
  * considering as the origin the center of the box or the center of mass
  * of a range of atomic indexes specified by "index": [start:stop].
