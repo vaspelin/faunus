@@ -396,7 +396,6 @@ class ChargeMoveExt : public Movebase {
 
     moldata mol1, mol2;
 
-    double sumTemp = 0;
     int i = 0;
 
     void _to_json(json &j) const override;
@@ -407,6 +406,44 @@ class ChargeMoveExt : public Movebase {
 
   public:
     ChargeMoveExt(Tspace &spc);
+};
+
+/**
+ * @brief Moves charge to one atom and the atoms of a whole molecule simultaneously
+ */
+class ChargeMoveAtomMol : public Movebase {
+  private:
+    typedef typename Space::Tpvec Tpvec;
+    Space &spc;           // Space to operate on
+    Average<double> msqd; // mean squared displacement
+    double dq = 0, deltaq = 0;
+
+    int atomIndex = 0;
+    double atomCharge = 0;
+    double molCharges = 0;
+    double ratio2 = 0;
+    int numOfAtoms = 0;
+    int id1 = 0;
+    int id2 = 0;
+    std::string molname;
+    std::string atomname;
+    std::vector<double> min, max;
+    std::vector<double> molrange;
+    std::vector<double> atomrange;
+    std::vector<double> ratio;
+    std::vector<double> molChangeQ;
+    Change::data cdata1, cdata2;
+
+    int i = 0;
+
+    void _to_json(json &j) const override;
+    void _from_json(const json &j) override;
+    void _move(Change &change) override;
+    void _accept(Change &) override;
+    void _reject(Change &) override;
+
+  public:
+    ChargeMoveAtomMol(Tspace &spc);
 };
 
 /**
