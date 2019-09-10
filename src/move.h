@@ -422,6 +422,7 @@ class ChargeMoveAtomMol : public Movebase {
     double atomCharge = 0;
     double molCharges = 0;
     double ratio2 = 0;
+    double sumTemp = 0;
     int numOfAtoms = 0;
     int id1 = 0;
     int id2 = 0;

@@ -958,23 +958,24 @@ void ChargeMoveAtomMol::_move(Change &change) {
                 deltaq = dq * (slump() - 0.5);
                 molChangeQ.clear(); // clearing vector containing attempted charge moves on all atoms in molecule2
                 cdata1.index = Faunus::distance(spc.groups.begin(), git1);
+                cdata1.atoms[0] = std::distance(git1->begin(), spc.p.begin() + atomIndex);
                 cdata2.index = Faunus::distance(spc.groups.begin(), git2);
-
-                auto p = git1->begin(); // object containing atom i in molecule1
-                                        // sumChanges1 += changeQ1[i];
+                auto &p = spc.p[atomIndex];
+                // auto p = git1; // object containing atom i in molecule1
+                // sumChanges1 += changeQ1[i];
                 atomCharge +=
-                    p->charge +
+                    p.charge +
                     deltaq; // adding new attempted charge of atom i in molecule1 to sum
                             // cout << "Attempted changes, atom index " << i << ": " << mol1.changeQ[i] << endl;
 
-                // cout << "Sum of attempted new charges, atom index " << i << ": " << mol1.charges << endl;
+                // cout << "Sum of attempted new charge on K: " << atomCharge << endl;
 
                 for (i = 0; i < numOfAtoms; i++) { // Doing the same as above loop but for molecule2
                     auto p = git2->begin() + i;
                     molChangeQ.push_back(deltaq * ratio[i]);
                     // sumMoves2 += changeQ2[i];
                     molCharges += p->charge + molChangeQ[i];
-                    // cout << "Attempted changes, atom index " << i << " in crownether: " << mol2.changeQ[i] << endl;
+                    // cout << "Attempted changes, atom index " << i << " in crownether: " << molChangeQ[i] << endl;
                 }
                 // cout << "Sum of attempted new charges, atom index " << i << " in crownether: " << mol2.charges <<
                 // endl;
@@ -1054,17 +1055,19 @@ void ChargeMoveAtomMol::_move(Change &change) {
                 }
 
                 else { // in case no boundaries were crossed, i.e. all new charges lies within their respective ranges
-                    auto p = git1->begin();
-                    p->charge += deltaq;
-                    // cout << "Change accepted for K" << endl;
-
+                    // auto p = git1->begin();
+                    auto &p = spc.p[atomIndex];
+                    p.charge += deltaq;
+                    // cout << "Change accepted for K, new charge: " << p.charge << endl;
+                    // sumTemp = 0;
                     for (i = 0; i < numOfAtoms; i++) {
                         auto p = git2->begin() + i;
                         p->charge += molChangeQ[i];
-                        // cout << "Change accepted for atoms in crownether" << endl;
+                        // sumTemp += p->charge;
+                        // cout << "Change accepted for atoms in crownether, new charge: " << p->charge << endl;
                     }
+                    // cout << "Sum of new charges, crownether: " << sumTemp << endl;
                 }
-                cdata1.all = true;               // change all atoms in molecule1
                 cdata2.all = true;               // change all atoms in molecule2
                 change.groups.push_back(cdata1); // add to list of moved groups
                 change.groups.push_back(cdata2); // add to list of moved groups
@@ -1081,6 +1084,7 @@ ChargeMoveAtomMol::ChargeMoveAtomMol(Space &spc) : spc(spc) {
 
     name = "chargemoveatommol";
     repeat = -1; // meaning repeat N times
+    cdata1.atoms.resize(1);
     cdata1.internal = true;
     cdata2.internal = true;
     // cdata1.atoms.resize(numOfAtoms1);
