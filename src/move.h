@@ -370,6 +370,40 @@ class ChargeTransfer : public Movebase {
     ChargeTransfer(Tspace &spc);
 };
 
+class ChargeTransferExt : public Movebase {
+  private:
+    typedef typename Space::Tpvec Tpvec;
+    Space &spc;           // Space to operate on
+    Average<double> msqd; // mean squared displacement
+    double dq = 0, deltaq = 0;
+
+    struct moldata {
+        double charges = 0;
+        double moves = 0;
+        int numOfAtoms = 0;
+        int id = 0;
+        std::string molname;
+        std::vector<double> min, max;
+        std::vector<double> molrange;
+        std::vector<double> ratio;
+        std::vector<double> changeQ;
+        Change::data cdata;
+    };
+
+    moldata mol1, mol2, mol3;
+
+    int i = 0;
+    int atomIndex;
+    double ratio2, ratio3;
+    void _to_json(json &j) const override;
+    void _from_json(const json &j) override;
+    void _move(Change &change) override;
+    void _accept(Change &) override;
+    void _reject(Change &) override;
+
+  public:
+    ChargeTransferExt(Tspace &spc);
+};
 /**
  * @brief Moves charge to several atoms simultaneously
  */
@@ -422,7 +456,6 @@ class ChargeMoveAtomMol : public Movebase {
     double atomCharge = 0;
     double molCharges = 0;
     double ratio2 = 0;
-    double sumTemp = 0;
     int numOfAtoms = 0;
     int id1 = 0;
     int id2 = 0;

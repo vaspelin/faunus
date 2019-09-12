@@ -197,6 +197,8 @@ Propagator::Propagator(const json &j, Space &spc, MPI::MPIController &mpi) {
                     this->template push_back<Move::ChargeMove>(spc);
                 else if (it.key() == "chargetransfer")
                     this->template push_back<Move::ChargeTransfer>(spc);
+                else if (it.key() == "chargetransferext")
+                    this->template push_back<Move::ChargeTransferExt>(spc);
                 else if (it.key() == "chargemoveext")
                     this->template push_back<Move::ChargeMoveExt>(spc);
                 else if (it.key() == "chargemoveatommol")
@@ -626,6 +628,312 @@ ChargeTransfer::ChargeTransfer(Space &spc) : spc(spc) {
     // cdata2.atoms.resize(numOfAtoms2);
 }
 
+void ChargeTransferExt::_to_json(json &j) const {
+    using namespace u8;
+    j = {{"dq", dq},
+         {rootof + bracket(Delta + "q" + squared), std::sqrt(msqd.avg())},
+         {cuberoot + rootof + bracket(Delta + "q" + squared), std::cbrt(std::sqrt(msqd.avg()))}};
+    _roundjson(j, 3);
+}
+void ChargeTransferExt::_from_json(const json &j) {
+    try {
+        dq = j.at("dq").get<double>();
+        mol1.molname = j.at("mol1"); // string containing name of molecule 1
+        mol2.molname = j.at("mol2"); // string containing name of molecule 2
+        atomIndex = j.at("index").get<int>();
+        mol1.molrange =
+            j.at("molrange1")
+                .get<std::vector<double>>(); // vector containing lower and upper limit of total charge of molecule 1
+        mol2.molrange =
+            j.at("molrange2")
+                .get<std::vector<double>>(); // vector containing lower and upper limit of total charge of molecule 2
+        mol3.molrange =
+            j.at("molrange3")
+                .get<std::vector<double>>(); // vector containing lower and upper limit of total charge of molecule 2
+        mol1.min =
+            j.at("min1").get<std::vector<double>>(); // vector containing lower limits of atomic charges in molecule 1
+        mol1.max =
+            j.at("max1").get<std::vector<double>>(); // vector containing upper limits of atomic charges in molecule 1
+        mol2.min =
+            j.at("min2").get<std::vector<double>>(); // vector containing lower limits of atomic charges in molecule 2
+        mol2.max =
+            j.at("max2").get<std::vector<double>>(); // vector containing upper limits of atomic charges in molecule 2
+        mol3.min =
+            j.at("min3").get<std::vector<double>>(); // vector containing lower limits of atomic charges in molecule 2
+        mol3.max =
+            j.at("max3").get<std::vector<double>>();   // vector containing upper limits of atomic charges in molecule 2
+        auto git1 = findName(molecules, mol1.molname); // group containing mol1.molname
+        auto git2 = findName(molecules, mol2.molname); // group containing mol2.molname
+
+        if (git1 == molecules.end()) // checking so that molecule1 exists
+            throw std::runtime_error("unknown molecule '" + mol1.molname + "'");
+
+        mol1.id = git1->id();
+        mol2.id = git2->id();
+
+        if (repeat < 0) {
+            auto v = spc.findMolecules(mol1.id);
+            repeat = std::distance(v.begin(), v.end());
+        }
+
+        if (git2 == molecules.end()) // checking so that molecule2 exists
+            throw std::runtime_error("unknown molecule '" + mol2.molname + "'");
+
+        if (repeat < 0) {
+            auto v = spc.findMolecules(mol2.id);
+            repeat = std::distance(v.begin(), v.end());
+        }
+
+        // cout << "Test 1" << endl;
+        if (mol1.min.size() !=
+            mol1.max.size()) // checking so that mol1.min and mol1.max contains equal number of entries
+            throw std::runtime_error("mol1.min and mol1.max need to have the same number of entries. mol1.min has " +
+                                     std::to_string(mol1.min.size()) + " and mol1.max has " +
+                                     std::to_string(mol1.max.size()) + " entries");
+
+        if (mol1.min.size() == 0 || mol1.max.size() == 0) // checking so that mol1.min and mol1.max are not empty
+            throw std::runtime_error(
+                "mol1.min and mol1.max both need to have nonzero number of entries. mol1.min has " +
+                std::to_string(mol1.min.size()) + " and mol1.max has " + std::to_string(mol1.max.size()) + " entries");
+
+        if (mol2.min.size() !=
+            mol2.max.size()) // checking so that mol2.min and mol2.max contains equal number of entries
+            throw std::runtime_error("mol2.min and mol2.max need to have the same number of entries. mol2.min has " +
+                                     std::to_string(mol2.min.size()) + " and mol2.max has " +
+                                     std::to_string(mol2.max.size()) + " entries");
+
+        if (mol2.min.size() == 0 || mol2.max.size() == 0) // checking so that mol2.min and mol2.max are not empty
+            throw std::runtime_error(
+                "mol2.min and mol2.max both need to have nonzero number of entries. mol2.min has " +
+                std::to_string(mol2.min.size()) + " and mol2.max has " + std::to_string(mol2.max.size()) + " entries");
+
+    } catch (std::exception &e) {
+        throw std::runtime_error(name + ": " + e.what());
+    }
+}
+
+void ChargeTransferExt::_move(Change &change) {
+
+    auto mollist1 = spc.findMolecules(mol1.id, Space::ACTIVE); // for free hydronium
+    auto mollist2 = spc.findMolecules(mol2.id, Space::ACTIVE); // for crownether
+
+    if (size(mollist1) > 0 && size(mollist2) > 0) {
+        auto git1 = slump.sample(mollist1.begin(), mollist1.end()); // selecting a random molecule of type molecule1
+        auto git2 = slump.sample(mollist2.begin(), mollist2.end()); // selecting a random molecule of type molecule2
+        auto git3 = spc.findGroupContaining(spc.p[atomIndex]);      // group containing atomIndex
+
+        // cout << "Test 2" << endl;
+        if (!git1->empty() && !git2->empty() && !git3->empty()) { // check that both molecule1 and molecule 2 exist
+
+            if (dq > 0) {
+                change.chargeMove =
+                    true; // setting to true makes the self-energy being computed and added to the total energy
+                mol1.numOfAtoms = Faunus::distance(git1->begin(), git1->end());
+                mol2.numOfAtoms = Faunus::distance(git2->begin(), git2->end());
+
+                mol1.ratio.clear(); // clearing vector containing ratio of atomic charge ranges and the charge range of
+                                    // the whole molecule1
+                mol2.ratio.clear(); // clearing vector containing ratio of atomic charge ranges and the charge range of
+                                    // the whole molecule2
+                ratio2 = (mol2.molrange[1] - mol2.molrange[0]) / (mol1.molrange[1] - mol1.molrange[0]);
+                ratio3 = (mol3.molrange[1] - mol3.molrange[0]) / (mol1.molrange[1] - mol1.molrange[0]);
+
+                for (i = 0; i < mol1.numOfAtoms; i++) {
+                    mol1.ratio.push_back(
+                        (mol1.max[i] - mol1.min[i]) /
+                        (mol1.molrange[1] - mol1.molrange[0])); // calculating ratio of atom i in molecule 1
+                }
+
+                for (i = 0; i < mol2.numOfAtoms; i++) {
+                    mol2.ratio.push_back(
+                        (mol2.max[i] - mol2.min[i]) /
+                        (mol2.molrange[1] - mol2.molrange[0])); // calculating ratio of atom i in molecule 2
+                }
+                // cout << "Test 3" << endl;
+                mol1.charges = 0; // setting sum of all atomic charges in molecule1 to zero
+                mol2.charges = 0; // setting sum of all atomic charges in molecule2 to zero
+                mol3.charges = 0; // setting sum of all atomic charges in molecule2 to zero
+                deltaq = dq * (slump() - 0.5);
+                mol1.changeQ.clear(); // clearing vector containing attempted charge moves on all atoms in molecule1
+                mol2.changeQ.clear(); // clearing vector containing attempted charge moves on all atoms in molecule2
+                mol3.changeQ.clear();
+                mol1.cdata.index = Faunus::distance(spc.groups.begin(), git1);
+                mol2.cdata.index = Faunus::distance(spc.groups.begin(), git2);
+                mol3.cdata.index = std::distance(spc.groups.begin(), git3); // integer *index* of moved group
+                mol3.cdata.atoms[0] =
+                    std::distance(git3->begin(), spc.p.begin() + atomIndex); // index of particle rel. to group
+
+                for (i = 0; i < mol1.numOfAtoms; i++) {
+                    auto p = git1->begin() + i; // object containing atom i in molecule1
+                    mol1.changeQ.push_back(
+                        deltaq * mol1.ratio[i]); // assigning attempted charge move of atom i in molecule1 to vector
+                    // sumChanges1 += changeQ1[i];
+                    mol1.charges +=
+                        p->charge + mol1.changeQ[i]; // adding new attempted charge of atom i in molecule1 to sum
+                }
+                for (i = 0; i < mol2.numOfAtoms; i++) { // Doing the same as above loop but for molecule2
+                    auto p = git2->begin() + i;
+                    mol2.changeQ.push_back(-deltaq * mol2.ratio[i] * ratio2);
+                    // sumMoves2 += changeQ2[i];
+                    mol2.charges += p->charge + mol2.changeQ[i];
+                }
+
+                // cout << "Test 4" << endl;
+
+                auto &p = spc.p[atomIndex];
+                mol3.changeQ.push_back(-deltaq * ratio3);
+                mol3.charges += p.charge + mol3.changeQ[0];
+
+                // Torodial boundary conditions
+                if (mol1.charges < mol1.molrange[0]) { // Checking if sum of new attempted atomic charges in molecule1
+                    /*                                   // will fall below lower limit in molrange1
+                    sumTemp = 0;                       // resetting temporary sum of atomic charges
+                    for (i = 0; i < mol1.numOfAtoms; i++) {
+                        auto p = git1->begin() + i;
+                        sumTemp +=
+                            p->charge -
+                            (2 * mol1.min[i] -
+                             (p->charge +
+                              mol1.changeQ[i])); // temporary sum of charge moves attempted on all atoms in molecule1
+                        p->charge = 2 * mol1.min[i] -
+                                    (p->charge + mol1.changeQ[i]); // new attempted charge of atom i in molecule1,
+                                                                   // obeying torodial boundary conditions
+                    }
+                    for (i = 0; i < mol2.numOfAtoms; i++) {
+                        auto p = git2->begin() + i;
+                        p->charge += sumTemp * mol2.ratio[i]; // new attempted charge of atom i in molecule2, obeying
+                                                              // torodial boundary conditions
+                    }
+                    */
+                }
+
+                else if (mol1.charges >
+                         mol1.molrange[1]) { // same procedure as above if statement, but if sum of new atempted charges
+                    /*                         // in molecule1 falls above upper limit in molrange1
+                    sumTemp = 0;
+                    for (i = 0; i < mol1.numOfAtoms; i++) {
+                        auto p = git1->begin() + i;
+                        sumTemp += p->charge - (2 * mol1.max[i] - (p->charge + mol1.changeQ[i]));
+                        p->charge = 2 * mol1.max[i] - (p->charge + mol1.changeQ[i]);
+                    }
+                    for (i = 0; i < mol2.numOfAtoms; i++) {
+                        auto p = git2->begin() + i;
+                        p->charge += sumTemp * mol2.ratio[i];
+                    }
+                    */
+                }
+
+                else if (mol2.charges < mol2.molrange[0]) { // same as first if statement, but with respect to molecule2
+                    /*                                        // and its molrange
+                    sumTemp = 0;
+                    for (i = 0; i < mol2.numOfAtoms; i++) {
+                        auto p = git2->begin() + i;
+                        sumTemp += p->charge - (2 * mol2.min[i] - (p->charge + mol2.changeQ[i]));
+                        p->charge = 2 * mol2.min[i] - (p->charge + mol2.changeQ[i]);
+                    }
+                    for (i = 0; i < mol1.numOfAtoms; i++) {
+                        auto p = git1->begin() + i;
+                        p->charge += sumTemp * mol1.ratio[i];
+                    }
+                    */
+                }
+
+                else if (mol2.charges >
+                         mol2.molrange[1]) { // same as previous if statement, but if sum of new attempted charges in
+                    /*                         // molecule2 falls above upper limit in molrange2
+                    sumTemp = 0;
+                    for (i = 0; i < mol2.numOfAtoms; i++) {
+                        auto p = git2->begin() + i;
+                        sumTemp += p->charge - (2 * mol2.max[i] - (p->charge + mol2.changeQ[i]));
+                        p->charge = 2 * mol2.max[i] - (p->charge + mol2.changeQ[i]);
+                    }
+                    for (i = 0; i < mol1.numOfAtoms; i++) {
+                        auto p = git1->begin() + i;
+                        p->charge += sumTemp * mol1.ratio[i];
+                    }
+                    */
+                }
+
+                else if (mol3.charges <
+                         mol3.molrange[0]) { // Checking if sum of new attempted atomic charges in molecule1
+                    /*                                   // will fall below lower limit in molrange1
+                    sumTemp = 0;                       // resetting temporary sum of atomic charges
+                    for (i = 0; i < mol1.numOfAtoms; i++) {
+                        auto p = git1->begin() + i;
+                        sumTemp +=
+                            p->charge -
+                            (2 * mol1.min[i] -
+                             (p->charge +
+                              mol1.changeQ[i])); // temporary sum of charge moves attempted on all atoms in molecule1
+                        p->charge = 2 * mol1.min[i] -
+                                    (p->charge + mol1.changeQ[i]); // new attempted charge of atom i in molecule1,
+                                                                   // obeying torodial boundary conditions
+                    }
+                    for (i = 0; i < mol2.numOfAtoms; i++) {
+                        auto p = git2->begin() + i;
+                        p->charge += sumTemp * mol2.ratio[i]; // new attempted charge of atom i in molecule2, obeying
+                                                              // torodial boundary conditions
+                    }
+                    */
+                }
+
+                else if (mol3.charges >
+                         mol3.molrange[1]) { // same procedure as above if statement, but if sum of new atempted charges
+                    /*                         // in molecule1 falls above upper limit in molrange1
+                    sumTemp = 0;
+                    for (i = 0; i < mol1.numOfAtoms; i++) {
+                        auto p = git1->begin() + i;
+                        sumTemp += p->charge - (2 * mol1.max[i] - (p->charge + mol1.changeQ[i]));
+                        p->charge = 2 * mol1.max[i] - (p->charge + mol1.changeQ[i]);
+                    }
+                    for (i = 0; i < mol2.numOfAtoms; i++) {
+                        auto p = git2->begin() + i;
+                        p->charge += sumTemp * mol2.ratio[i];
+                    }
+                    */
+                } else { // in case no boundaries were crossed, i.e. all new charges lies within their respective ranges
+                    auto &p = spc.p[atomIndex]; // refence to particle
+                    p.charge += mol3.changeQ[0];
+                    for (i = 0; i < mol1.numOfAtoms; i++) {
+                        auto p = git1->begin() + i;
+                        p->charge += mol1.changeQ[i];
+                    }
+                    for (i = 0; i < mol2.numOfAtoms; i++) {
+                        auto p = git2->begin() + i;
+                        p->charge += mol2.changeQ[i];
+                    }
+                }
+
+                // cout << "Test 5" << endl;
+                // cout << "Test 6" << endl;
+                change.groups.push_back(mol3.cdata); // add to list of moved groups
+                mol1.cdata.all = true;               // change all atoms in molecule1
+                mol2.cdata.all = true;               // change all atoms in molecule2
+                change.groups.push_back(mol1.cdata); // add to list of moved groups
+                change.groups.push_back(mol2.cdata); // add to list of moved groups
+
+                // cout << "Test 7" << endl;
+            } else
+                deltaq = 0;
+        }
+    }
+}
+
+void ChargeTransferExt::_accept(Change &) { msqd += deltaq * deltaq; }
+void ChargeTransferExt::_reject(Change &) { msqd += 0; }
+ChargeTransferExt::ChargeTransferExt(Space &spc) : spc(spc) {
+
+    // cout << "Test 8" << endl;
+    name = "chargetransferext";
+    repeat = -1;                // meaning repeat N times
+    mol3.cdata.atoms.resize(1); // we change exactly one atom
+    mol3.cdata.internal = true; // the group is internally changed
+    mol1.cdata.internal = true;
+    mol2.cdata.internal = true;
+    // cout << "Test 9" << endl;
+    // cdata1.atoms.resize(numOfAtoms1);
+    // cdata2.atoms.resize(numOfAtoms2);
+}
 void ChargeMoveExt::_to_json(json &j) const {
     using namespace u8;
     j = {{"dq", dq},
